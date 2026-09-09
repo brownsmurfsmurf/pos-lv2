@@ -134,6 +134,14 @@ interface CartState {
 `tax_rates` は取引と外部キーで結ばず、取引には算出済みの税額・合計の値を保存する。
 税率変更後の過去取引の扱い（適用税率を記録するか）は Q-13。
 
+**値引き期間の判定に用いる「取引日（JST）」の生成元**: `start_date <= 取引日 <= end_date`（end_date は当日を含む）の
+取引日は、**Backend の `PricingService` が 1 箇所で生成する**。現在時刻を UTC で 1 回取得し（`Clock.now()`）、
+`BUSINESS_TIMEZONE`（Asia/Tokyo）へ変換した日付を用いる。`date.today()`（サーバの TZ に依存）、SQL の
+`CURDATE()` / `NOW()`（DB サーバの TZ に依存）、Frontend の時計は使わない。Azure のサーバは UTC で動くため、
+JST 0:00〜8:59 は `date.today()` が前日を返し、当日で終わる値引きが朝に効いてしまう。API-06 では取引時刻
+`transacted_at` を先に 1 回取得し、その同じ瞬間から取引日を作って判定と保存に用いる。API-05 の見積時とは
+取り直すため JST 0:00 をまたぐと値引きが変わり得るが、その場合は照合不一致（409）で Frontend に再表示させる。
+
 ### 6.2 共通規約
 
 | # | 規約 | 根拠 |
@@ -141,7 +149,7 @@ interface CartState {
 | DB-1 | テーブル・列は英語の snake_case、テーブル名は複数形 | — |
 | DB-2 | 全テーブルに代理キー `id BIGINT UNSIGNED AUTO_INCREMENT`。業務キー（商品コード・会員ID・担当者ID）は別列に UNIQUE | 商品コード等はバーコードの値であり主キーに向かない |
 | DB-3 | 金額は円の整数 `INT`。率は `DECIMAL(5,2)`、値引き値は `DECIMAL(10,2)` | D-04〜D-07 |
-| DB-4 | 日時は `DATETIME(6)` に UTC で保存し、表示時に JST へ変換。業務日付は `DATE` | — |
+| DB-4 | 日時は `DATETIME(6)` に UTC で保存し、表示時に JST へ変換。業務日付は `DATE`。DB 接続はセッションで `time_zone = '+00:00'` を明示し、日付の比較は Backend が作った取引日（6.1）をバインド変数で渡す（SQL 側で日付を生成しない） | — |
 | DB-5 | 文字コード `utf8mb4`。コード類は `utf8mb4_bin` | — |
 | DB-6 | 取引明細に購入時点の単価を写し取り、以後のマスタ変更に影響されない | DR-1, FR-08-5 |
 | DB-7 | 外部キーは `ON DELETE RESTRICT`。マスタの削除方法（論理／物理）は Q-15 | — |
@@ -339,6 +347,8 @@ interface LoginResponse { access_token: string; token_type: "Bearer"; expires_in
 
 出力 200: `QuoteResult`。
 
+前提: 判定に用いる「取引日（JST）」は、要求を受けた時点の UTC 現在時刻を 1 回取得し `BUSINESS_TIMEZONE` へ変換して作る（6.1）。
+
 計算規則（Backend の正本。Frontend は結果を表示するだけで、値引きの判定は行わない）:
 
 1. `line_gross = unit_price × quantity`
@@ -363,7 +373,7 @@ interface QuoteRequest { member_code: string | null; items: QuoteItemRequest[] }
 | items[].quantity / unit_price / discount_amount / line_total | — | ○ | Frontend が表示していた値 |
 | tax_rate / subtotal_excl_tax / tax_amount / total_incl_tax | — | ○ | 同上 |
 
-処理順:
+処理順（手順 2〜3 で用いる取引時刻と取引日は、手順 1 の後に **1 回だけ**取得した同じ瞬間の値とする。6.1）:
 
 1. Pydantic で型・形式を検証（400）。数量などの業務範囲はサービス層で判定（422）
 2. API-05 と同じ規則で全額を再計算し、明細ごとの金額と合計を Frontend の値と比較。1 円でも差があれば 409 PRICE_MISMATCH とし、details に Backend の `QuoteResult` を返す
@@ -417,7 +427,8 @@ interface CommitResponse {
 |---|---|---|
 | Router（FastAPI） | `routers/auth.py`, `products.py`, `members.py`, `pricing.py`, `transactions.py` | HTTP の受付、Pydantic 検証、JWT 検証の依存関係 |
 | Service | `AuthService` | 認証、JWT の発行・検証 |
-| Service | `PricingService` | **金額計算の正本。** 有効税率・値引きの決定、明細と合計の算出。API-05 と API-06 の両方が使う |
+| Service | `PricingService` | **金額計算の正本。** 有効税率・値引きの決定、明細と合計の算出。API-05 と API-06 の両方が使う。取引日（JST）は `Clock` から得た UTC 時刻を変換して自身で作る（6.1） |
+| Service | `Clock` | 現在時刻（UTC）を返すだけの依存。本番は `datetime.now(timezone.utc)`、テストでは固定時刻を注入する。JST 0:00 前後（UTC 14:59:59 / 15:00:00）で値引きの適用・非適用が切り替わることを自動テストで検証する |
 | Service | `TransactionService` | 再計算との照合、1 トランザクションでの保存 |
 | Repository / UnitOfWork | `UnitOfWork` | SQLAlchemy Session とトランザクション境界。接続プール（N-04） |
 | Model | `Staff`, `Product`, `Member`, `Transaction`, `TransactionItem`, `TaxRate`, `Discount`, `DiscountApplication` | 6 章のテーブルと 1 対 1 |
@@ -446,6 +457,7 @@ Frontend は `features/cart/store.ts`（5.2 の状態）、`features/scanner/`�
 | JWT_TTL_HOURS ★ | 8 | トークン有効期間 | SEC-02 |
 | SCAN_DEBOUNCE_MS ★ | 1,500 | 同一バーコードの連続検出を無視 | カメラが同じコードを毎フレーム読むため |
 | BODY_MAX_BYTES ★ | 1,048,576 | 要求本文の上限 | SEC-07 |
+| BUSINESS_TIMEZONE | Asia/Tokyo | 値引き期間の判定に用いる取引日の基準。Backend が UTC 現在時刻をこの TZ へ変換して作る | 6.1 |
 
 環境変数: `APP_ENV`、`API_UPSTREAM_URL`（BFF → FastAPI）、`JWT_SECRET`（秘密）、`DATABASE_URL`（秘密）、`CORS_ALLOW_ORIGINS`。秘密はアプリケーション設定に置く。
 
@@ -602,6 +614,7 @@ npm / PyPI レジストリで最新安定版を確認し、採用バージョン
 | 版 | 日付 | 内容 |
 |---|---|---|
 | v1.0 | 2026-09-09 | 要求忠実版として作成。前版（v1.1）から管理 API・現金決済・会計キャンセル・監査ログ・冪等キー・権限区分・ログアウト・ログイン試行制限・共有秘密ヘッダ・バックアップ等を除き、API を 27 本から 7 本に、テーブルを 10 から 8 に、図を 12 枚から 9 枚に整理。要求外の提案は ★ と 14.1 に集約 |
+| v1.1 | 2026-09-09 | レビュー指摘「値引き判定の取引日（JST）の生成元が未定義」を反映。取引日は Backend の PricingService が UTC 現在時刻を BUSINESS_TIMEZONE へ変換して 1 箇所で生成し、`date.today()`・SQL の `CURDATE()`・Frontend の時計を使わないことを 6.1・DB-4・7.4・9 章・10 章に明記。API-06 では取引時刻と取引日を同じ瞬間から作る。`Clock` 依存を追加し、JST 0:00 前後の境界テストを必須とした |
 
 ---
 

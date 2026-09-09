@@ -386,7 +386,7 @@ interface CartState {
 | DB-3 | 論理削除 | マスタ・設定（staff / products / members / discounts / tax_rates）は `deleted_at DATETIME(6) NULL` による論理削除。NULL が有効行。取引系は削除しない | DR-5, DR-1 |
 | DB-4 | 金額 | 円の整数 `INT`。小数は持たない | Q-1, Q-2 の端数処理を適用済みの値を保存 |
 | DB-5 | 率 | 税率は `DECIMAL(5,2)`（例 10.00）。値引き値は `DECIMAL(10,2)`（割合なら %、金額なら円。`discount_type` で判別） | D-06-1, D-07-5〜6 |
-| DB-6 | 日時 | `DATETIME(6)` に **UTC** で保存し、表示時に JST へ変換する。業務日付（税率・値引きの適用日）は `DATE`（JST） | Azure のサーバ時刻が UTC |
+| DB-6 | 日時 | `DATETIME(6)` に **UTC** で保存し、表示時に JST へ変換する。業務日付（税率・値引きの適用日）は `DATE`（JST）。DB 接続はセッションで `time_zone = '+00:00'` を明示し、DB サーバ側の TZ 設定に依存しない。業務日付との比較は SQL 側で日付を生成せず、Backend が作った取引日（6.5）をバインド変数で渡す | Azure のサーバ時刻が UTC |
 | DB-7 | 文字コード | `utf8mb4`。文字列は `utf8mb4_0900_ai_ci`、コード類（`product_code` / `member_code` / `login_id`）は `utf8mb4_bin` | 大文字小文字の区別 |
 | DB-8 | 監査列 | 全テーブルに `created_at DATETIME(6) NOT NULL`、マスタ・設定（DB-3 と同じ対象。tax_rates を含む）には `updated_at DATETIME(6) NOT NULL` を持つ | — |
 | DB-9 | 外部キー | `ON DELETE RESTRICT`。業務テーブルでは物理削除を行わない。例外は `idempotency_keys` の期限切れ削除のみ（U-6） | DR-5 |
@@ -544,7 +544,8 @@ API-07 の二重送信防止（7.3）に用いる技術テーブル。業務デ�
 | 対象 | 規則 | 根拠 |
 |---|---|---|
 | 消費税率 | `deleted_at IS NULL` かつ `effective_from <= 取引日（JST）` を満たす行のうち `effective_from` が最大の 1 件。該当なしはエラー（税率未設定） | FR-07-2, D-06-2 |
-| 値引き | 会員あり取引で、`product_id` が一致し `start_date <= 取引日（JST） <= end_date` かつ `deleted_at IS NULL` の行。複数該当時は値引き額が最大の 1 件 | FR-06-1, FR-06-4, Q-4 |
+| 値引き | 会員あり取引で、`product_id` が一致し `start_date <= 取引日（JST） <= end_date` かつ `deleted_at IS NULL` の行（end_date は当日を含む）。複数該当時は値引き額が最大の 1 件 | FR-06-1, FR-06-4, Q-4 |
+| 取引日（JST）の決定 | 上 2 行で用いる「取引日（JST）」は **Backend の `PricingService` が 1 箇所で生成する**。現在時刻を UTC で 1 回取得し（`Clock.now()`）、`BUSINESS_TIMEZONE`（Asia/Tokyo）へ変換した日付を用いる。`date.today()`（サーバの TZ に依存）、SQL の `CURDATE()` / `NOW()`（DB サーバの TZ に依存）、Frontend の時計は使わない。API-07 では取引時刻 `transacted_at` を先に 1 回取得し、**その同じ瞬間**から取引日を作って税率判定・値引き判定・保存のすべてに用いる（1 リクエスト内で日付を 2 回取らない）。API-06 の見積時の日付とは取り直すため、JST 0:00 をまたぐと値引きが変わり得るが、その場合は照合不一致（409 PRICE_MISMATCH）で Frontend に再表示させる。Azure のサーバは UTC で動くため、JST 0:00〜8:59 は `date.today()` が前日を返す。境界テストは 9.3 参照 | DB-6, SEC-09, 10.4 |
 
 ### 6.6 データ要件との対応
 
@@ -783,6 +784,8 @@ interface LoginResponse { access_token: string; token_type: "Bearer"; expires_in
 | tax_amount | Money | floor(subtotal_excl_tax × tax_rate / 100)（Q-1） |
 | total_incl_tax | Money | subtotal_excl_tax + tax_amount |
 
+前提: 計算に用いる「取引日（JST）」は、要求を受けた時点の UTC 現在時刻を 1 回取得し `BUSINESS_TIMEZONE` へ変換して作る（6.5）。有効税率・値引きの判定はこの 1 つの値で行う。
+
 計算規則（Backend の正本。Frontend は規則 3〜5 の集計のみを表示用に行い、規則 1〜2 の値引き判定は行わない）:
 
 1. `line_gross = unit_price × quantity`
@@ -821,7 +824,7 @@ type QuoteResponse = QuoteResult;
 | total_incl_tax | Money | ○ | 同・税込合計 |
 | tendered_amount | Money | ○ | 預かり金額。0〜`TENDER_MAX` |
 
-Backend の処理順:
+Backend の処理順（手順 3〜5 で用いる取引時刻と取引日は、手順 2 の後に **1 回だけ**取得した同じ瞬間の値とする。6.5）:
 
 1. Pydantic で型・形式を検証（400）。数量・行数・預かり金額の業務範囲はサービス層で判定し 422 を返す（API-P8）
 2. Idempotency-Key を確認。既存なら保存済み応答を返す（同本文）／409 DUPLICATE_REQUEST（異本文）
@@ -1097,7 +1100,8 @@ BFF は Cookie の JWT を Bearer ヘッダへ付け替え、Zod で本文を検
 | クラス | 責務 | 主なメソッド | 対応 |
 |---|---|---|---|
 | AuthService | 認証・トークン発行・検証、ロール判定 | `login()`, `verify_token()`, `require_role()`, `hash_password()` | FR-01, SEC-01〜05, API-01〜03 |
-| PricingService | **金額計算の正本。** 有効税率・値引きの決定、明細と合計の算出。API-06 と API-07 の両方が同じインスタンスを使う | `quote()`, `resolve_tax_rate()`, `resolve_discount()`, `calc_line()`, `calc_totals()` | FR-06, FR-07, 6.5, 7.5 計算規則, SEC-09 |
+| PricingService | **金額計算の正本。** 有効税率・値引きの決定、明細と合計の算出。API-06 と API-07 の両方が同じインスタンスを使う。取引日（JST）は `Clock` 依存から得た UTC 時刻を変換して自身で作る（6.5） | `quote()`, `business_date(now_utc)`, `resolve_tax_rate()`, `resolve_discount()`, `calc_line()`, `calc_totals()` | FR-06, FR-07, 6.5, 7.5 計算規則, SEC-09 |
+| Clock | 現在時刻（UTC）を返すだけの依存。本番は `datetime.now(timezone.utc)`、テストでは固定時刻を注入する | `now() -> datetime` | 6.5、日付境界テスト |
 | TransactionService | 取引の確定。冪等性、再計算との照合、1 トランザクションでの保存。キャンセルの監査記録 | `commit()`, `verify_against_client()`, `get()`, `record_cancel()` | FR-08, FR-10, API-07, API-08, API-27, N-02 |
 | MasterService | マスタ・設定の CRUD（論理削除）、重複・期間の検証。税率は適用開始前のもののみ修正・削除可 | `list_*()`, `create_*()`, `update_*()`, `soft_delete_*()`（products / members / tax_rates / discounts） | FR-09, API-10〜23, 25, 26, DR-5 |
 | AuditService | 操作ログの記録。他サービスから呼ばれる | `record()` | N-09, D-09 |
@@ -1105,6 +1109,11 @@ BFF は Cookie の JWT を Bearer ヘッダへ付け替え、Zod で本文を検
 
 PricingService の計算は純粋関数として実装し、DB アクセス（税率・値引きの取得）と分離する。
 これにより集計部分（規則 3〜5）は Frontend の `lib/pricing.ts` と同じ入力に対して同じ出力を返すことを単体テストで検証できる（12.6）。値引きの判定（規則 2）は Backend のみが持つ。
+
+**日付境界のテスト（必須）**: `Clock` に固定時刻を注入し、`end_date = 9 月 9 日` の値引きについて、
+UTC `2026-09-09T14:59:59`（JST 9 日 23:59:59）では適用され、UTC `2026-09-09T15:00:00`（JST 10 日 0:00:00）では
+適用されないことを検証する。`start_date` についても同じ境界で逆の結果を検証する。この境界は日中の手動テストでは
+踏めないため、自動テストに含める。
 
 ### 9.4 Pydantic スキーマと TypeScript 型の対応
 
@@ -1215,7 +1224,8 @@ Backend と Frontend の計算が同時に切り替わる。
 | DB_POOL_PRE_PING | true | 取得時に生存確認 | 切断済み接続の再利用を防ぐ |
 | SCAN_DEBOUNCE_MS | 1,500 | 同一バーコードの連続検出を無視する時間 | カメラが同じコードを毎フレーム読むため（9.5） |
 | QUOTE_DEBOUNCE_MS | 200 | 数量の連打時に API-06 の呼び出しをまとめる | 要件定義書 6.1 の応答速度、無駄な要求の抑制 |
-| APP_TIMEZONE_DISPLAY | Asia/Tokyo | 表示・業務日付の基準 | DB-6 |
+| BUSINESS_TIMEZONE | Asia/Tokyo | 取引日（税率・値引きの適用判定に用いる日付）の基準。Backend が UTC 現在時刻をこの TZ へ変換して日付を作る（6.5） | DB-6, 6.5 |
+| APP_TIMEZONE_DISPLAY | Asia/Tokyo | 画面表示の日時の基準（BUSINESS_TIMEZONE とは役割を分ける） | 5.7 |
 
 ### 10.5 環境変数一覧
 
@@ -1622,6 +1632,7 @@ TypeScript 5.9.3 は型チェッカーであり実行時コードに含まれな
 |---|---|---|
 | v1.0 | 2026-09-07 | 初版。要件定義書 v1.2 を入力とし、システム構成、ユースケース図、アクティビティ図 2 枚、画面設計、ER 図とテーブル定義（9＋1 テーブル）、API 24 本の入出力と TypeScript 型、シーケンス図 5 枚、クラス図、設定・制約値、エラーコード 24 件、セキュリティ対策と依存ライブラリのバージョン調査（2026-09-07 時点）、要件・指定項目との対応表を定めた |
 | v1.1 | 2026-09-07 | 文脈を持たない第三者（Backend 実装者・Frontend 実装者・採点者・整合性検査の 4 視点）による読者テストの指摘を反映。Cookie の Path を `/` に変更（middleware ガードとの矛盾を解消）。冪等キーの生成時期を購入ボタン押下時に統一し、キャンセルで破棄。税率の修正・削除 API（API-25, 26）と会計キャンセルの監査 API（API-27）を追加。0 行の会計を 422 CART_EMPTY に到達させるため入力制約を見直し、型検証（400）と業務範囲（422）の役割を API-P8 で明文化。アプリ用 DB ユーザに idempotency_keys の DELETE 権限を追加。会員ID空入力での会員なし進行、商品モードでの会員証読み取り、数量 0・空欄、会員証モードのタイムアウト、pendingProduct のクリア、line_no の採番、値引き期間の重なりを明文化。SEC-14（個人情報の最小化）を定義。OSV.dev による既知脆弱性の照会結果を追加。Frontend のクラス図（9.5）を追加し、Backend クラス図と ER 図の列をテーブル定義に合わせた。再検証で残った波及漏れ（追加 API の 11.2・13.1・9.4・A.3 への反映、Zod と Pydantic の検証範囲の明確化、型定義の追加）を修正 |
+| v1.2 | 2026-09-09 | レビュー指摘「6.5 の取引日（JST）の生成元が未定義」を反映。取引日は Backend の PricingService が UTC 現在時刻を BUSINESS_TIMEZONE へ変換して 1 箇所で生成し、`date.today()`・SQL の `CURDATE()`・Frontend の時計を使わないことを 6.5・DB-6・7.5・9.3・10.4 に明記。API-07 では取引時刻と取引日を同じ瞬間から作る。`Clock` 依存を追加し、JST 0:00 前後（UTC 14:59:59 / 15:00:00）の境界テストを必須とした |
 
 ---
 
