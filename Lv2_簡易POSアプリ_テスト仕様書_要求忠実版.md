@@ -578,9 +578,12 @@ describe("購入リスト", () => {
 
 ---
 
-## 付録 A. 図の Mermaid ソース
+## 付録 A. 図のソース
 
-### A.1 V 字モデル（st_fig02）
+図2（V 字モデル）は V 字の形を保つため Python（Pillow）で作図した（スクリプト `draw_v.py`）。
+参考として、同じ対応関係を Mermaid で表したソースを以下に置く（Mermaid では横一列に平坦化される）。
+
+### A.1 V 字モデル（Mermaid 版）
 
 ```mermaid
 flowchart LR
