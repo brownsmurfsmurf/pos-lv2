@@ -1,0 +1,23 @@
+# Node
+node_modules/
+.next/
+out/
+coverage/
+*.tsbuildinfo
+next-env.d.ts
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.coverage
+htmlcov/
+# env / secrets
+.env
+.env.*
+!.env.example
+# misc
+.DS_Store
+# local database
+*.db
