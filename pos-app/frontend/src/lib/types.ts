@@ -8,9 +8,9 @@ export interface ApiErrorBody {
   error: { code: string; message: string; details: Record<string, unknown> };
 }
 
-export interface StaffInfo { id: number; login_id: string; name: string }
+export interface StaffInfo { id: number; login_id: string } // ★ 表示するのは担当者ID（K-4）
 export interface ProductInfo { id: number; product_code: string; name: string; unit_price: Money }
-export interface MemberInfo { id: number; member_code: string; name: string }
+export interface MemberInfo { id: number; member_code: string } // 会員ID だけ。氏名は扱わない（K-5）
 
 export interface LoginRequest { login_id: string; password: string }
 export interface LoginResponse { staff: StaffInfo } // BFF はトークンを Cookie に入れ staff のみ返す

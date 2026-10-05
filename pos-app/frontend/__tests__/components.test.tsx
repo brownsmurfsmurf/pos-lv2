@@ -1,4 +1,4 @@
-// UT-F-26〜35（テスト仕様書 5.2）: 画面部品の表示
+// 単体テスト UT-F-17〜24, UT-F-29（テスト仕様書 v2 の 4.2）: 画面の部品の表示
 import { fireEvent, render, screen } from "@testing-library/react";
 import { CartTable } from "@/components/CartTable";
 import { MemberPanel } from "@/components/MemberPanel";
@@ -11,29 +11,25 @@ import { TotalsPanel } from "@/components/TotalsPanel";
 import { ERROR_MESSAGES } from "@/lib/errors";
 import type { QuoteResult } from "@/lib/types";
 
+// E-2 の条件: 188 円 × 1（値引きなし）と 150 円 × 2（20% 引き）→ 税抜 428、税 42、税込 470
 const quote: QuoteResult = {
   tax_rate: 10,
   lines: [
+    { product_code: "4901234567900", product_name: "食パン 6枚切", unit_price: 188, quantity: 1, discount: null, line_total: 188 },
     { product_code: "4901234567894", product_name: "緑茶 500ml", unit_price: 150, quantity: 2,
       discount: { discount_id: 1, type: "percent", value: 20, amount: 60 }, line_total: 240 },
-    { product_code: "4901234567900", product_name: "食パン 6枚切", unit_price: 188, quantity: 1, discount: null, line_total: 188 },
   ],
   subtotal_excl_tax: 428, tax_amount: 42, total_incl_tax: 470,
 };
-const lines = [{ product_code: "4901234567894", quantity: 2 }, { product_code: "4901234567900", quantity: 1 }];
+const lines = [{ product_code: "4901234567900", quantity: 1 }, { product_code: "4901234567894", quantity: 2 }];
 
-describe("表示部品", () => {
-  it("UT-F-26 「商品がマスタ未登録です」の文言が出る (FR-03-5)", () => {
+describe("画面の部品", () => {
+  it("UT-F-17 商品が見つからない → 「商品がマスタ未登録です」が出る (FR-03-5)", () => {
     render(<MessageBar message={ERROR_MESSAGES.PRODUCT_NOT_FOUND} tone="error" />);
     expect(screen.getByRole("status")).toHaveTextContent("商品がマスタ未登録です");
   });
 
-  it("UT-F-27 会員が見つからない旨が出る (FR-02-6)", () => {
-    render(<MessageBar message={ERROR_MESSAGES.MEMBER_NOT_FOUND} tone="error" />);
-    expect(screen.getByTestId("message-bar")).toHaveTextContent("該当する会員が見つかりません");
-  });
-
-  it("UT-F-28 選んだ行が強調される (FR-05-2)", () => {
+  it("UT-F-18 選んだ行だけ強調される (FR-05-2)", () => {
     const onSelect = jest.fn();
     render(<CartTable lines={lines} catalog={{}} quote={quote} selectedLineNo={1} onSelect={onSelect} />);
     expect(screen.getByTestId("cart-row-1")).toHaveClass("cart__row--selected");
@@ -42,107 +38,106 @@ describe("表示部品", () => {
     expect(onSelect).toHaveBeenCalledWith(2);
   });
 
-  it("UT-F-29 値引き額（−60円）が出る (FR-06-5)", () => {
-    render(<CartTable lines={lines} catalog={{}} quote={quote} selectedLineNo={null} onSelect={() => {}} />);
-    expect(screen.getByTestId("cart-row-1")).toHaveTextContent("−60円");
-    expect(screen.getByTestId("cart-row-1")).toHaveTextContent("240円");
-  });
-
-  it("UT-F-30 選んだ商品の名称・単価・数量が出る (FR-05-3)", () => {
-    render(<SelectedItemPanel line={lines[0]} product={null} quoteLine={quote.lines[0]} onChangeQuantity={() => {}} onRemove={() => {}} />);
+  it("UT-F-19 選択中の商品の名称・単価・数量が出る (FR-05-3)。数量の変更と削除ができる (FR-05-4, FR-05-5)", () => {
+    const onChange = jest.fn();
+    const onRemove = jest.fn();
+    render(<SelectedItemPanel line={lines[1]} product={null} quoteLine={quote.lines[1]} onChangeQuantity={onChange} onRemove={onRemove} />);
     const panel = screen.getByTestId("selected-panel");
     expect(panel).toHaveTextContent("緑茶 500ml");
     expect(panel).toHaveTextContent("150円");
     expect(screen.getByLabelText("数量")).toHaveValue(2);
-  });
-
-  it("UT-F-31 ＋／−／削除が呼ばれる (FR-05-4, FR-05-5)", () => {
-    const onChange = jest.fn();
-    const onRemove = jest.fn();
-    render(<SelectedItemPanel line={lines[0]} product={null} quoteLine={quote.lines[0]} onChangeQuantity={onChange} onRemove={onRemove} />);
     fireEvent.click(screen.getByLabelText("数量を増やす"));
     expect(onChange).toHaveBeenCalledWith(3);
     fireEvent.click(screen.getByLabelText("数量を減らす"));
     expect(onChange).toHaveBeenCalledWith(1);
+    fireEvent.change(screen.getByLabelText("数量"), { target: { value: "5" } });
+    expect(onChange).toHaveBeenCalledWith(5);
     fireEvent.click(screen.getByText("削除"));
     expect(onRemove).toHaveBeenCalled();
   });
 
-  it("UT-F-32 税抜・税込の合計が出る (FR-05-8)", () => {
+  it("UT-F-20 購入リストに名称・数量・単価・値引き額・小計が出る (FR-04-7, FR-06-5)", () => {
+    render(<CartTable lines={lines} catalog={{}} quote={quote} selectedLineNo={null} onSelect={() => {}} />);
+    const row = screen.getByTestId("cart-row-2");
+    expect(row).toHaveTextContent("緑茶 500ml");
+    expect(row).toHaveTextContent("2");
+    expect(row).toHaveTextContent("150円");
+    expect(row).toHaveTextContent("−60円");
+    expect(row).toHaveTextContent("240円");
+    expect(screen.getByTestId("cart-row-1")).not.toHaveTextContent("−");
+  });
+
+  it("UT-F-21 ★ 合計に税抜合計と税込合計が出る (FR-05-8, FR-07-1, K-25)", () => {
     render(<TotalsPanel quote={quote} />);
     expect(screen.getByTestId("subtotal")).toHaveTextContent("428円");
-    expect(screen.getByTestId("tax")).toHaveTextContent("42円");
     expect(screen.getByTestId("total")).toHaveTextContent("470円");
   });
 
-  it("UT-F-33 ポップアップに税込・税抜の両方が出て、閉じるで onClose (FR-07-1, FR-08-3/4)", () => {
+  it("UT-F-22 ポップアップに税込合計と税抜合計が出る。閉じるが押せる (FR-08-3, FR-07-1)", () => {
     const onClose = jest.fn();
     render(<ResultPopup result={{ transaction_id: 7, transacted_at: "2026-09-15T03:00:00Z", subtotal_excl_tax: 428, tax_amount: 42, total_incl_tax: 470 }} onClose={onClose} />);
-    expect(screen.getByTestId("popup-subtotal")).toHaveTextContent("428円");
     expect(screen.getByTestId("popup-total")).toHaveTextContent("470円");
+    expect(screen.getByTestId("popup-subtotal")).toHaveTextContent("428円");
     fireEvent.click(screen.getByText("閉じる"));
     expect(onClose).toHaveBeenCalled();
   });
 
-  it("UT-F-34 「1 件追加」が出る (FR-03-6)、追加ボタンは読み込み前は無効", () => {
-    const onRead = jest.fn();
-    const { rerender } = render(<ProductEntryPanel pendingProduct={null} addedFlash={false} onRead={onRead} onAdd={() => {}} />);
-    expect(screen.getByText("追加")).toBeDisabled();
-    fireEvent.change(screen.getByLabelText("商品コード"), { target: { value: "4901234567894" } });
-    fireEvent.click(screen.getByText("商品コード読み込み"));
-    expect(onRead).toHaveBeenCalledWith("4901234567894");
-    rerender(<ProductEntryPanel pendingProduct={{ id: 1, product_code: "4901234567894", name: "緑茶 500ml", unit_price: 150 }} addedFlash={true} onRead={onRead} onAdd={() => {}} />);
-    expect(screen.getByTestId("pending-name")).toHaveTextContent("緑茶 500ml");
-    expect(screen.getByTestId("added-indicator")).toHaveTextContent("1 件追加");
+  it("UT-F-23 ★ 担当者ID が出る (FR-01-6, K-4)", () => {
+    render(<PosHeader staff={{ id: 1, login_id: "staff01" }} />);
+    expect(screen.getByTestId("staff-info")).toHaveTextContent("staff01");
   });
 
-  it("UT-F-35 担当者名が出る (FR-01-5)、会員なしでも読み込みボタンで進める (FR-02-7)", () => {
-    render(<PosHeader staff={{ id: 1, login_id: "staff01", name: "佐藤 花子" }} />);
-    expect(screen.getByTestId("staff-name")).toHaveTextContent("佐藤 花子");
-    const onRead = jest.fn();
-    render(<MemberPanel member={null} scanMode="product" onRead={onRead} onStartScan={() => {}} />);
-    fireEvent.click(screen.getByText("お客様ID読み込み"));
-    expect(onRead).toHaveBeenCalledWith("");
-    expect(screen.getByTestId("member-name")).toHaveTextContent("（会員なし）");
+  it("UT-F-24 ★ 会員ID が出る。氏名は出ない (FR-02-4, K-5)", () => {
+    render(<MemberPanel member={{ id: 1, member_code: "M0001" }} scanMode="member" onRead={() => {}} onStartScan={() => {}} />);
+    expect(screen.getByTestId("member-id")).toHaveTextContent("M0001");
+    expect(screen.queryByText(/山田/)).toBeNull();
+    expect(screen.getByText("会員証スキャン")).toHaveAttribute("aria-pressed", "true");
   });
 
-  it("MemberPanel: Enter で読み込み、会員証スキャンボタンで onStartScan (FR-02-1/2)", () => {
+  it("UT-F-29 お客様ID を空のまま読み込みボタン → エラーにならず、会員なしで進む (FR-02-7, D-005)", () => {
     const onRead = jest.fn();
     const onStartScan = jest.fn();
-    render(<MemberPanel member={{ id: 1, member_code: "M0001", name: "山田 太郎" }} scanMode="member" onRead={onRead} onStartScan={onStartScan} />);
+    render(<MemberPanel member={null} scanMode="product" onRead={onRead} onStartScan={onStartScan} />);
+    fireEvent.click(screen.getByText("お客様ID読み込み"));
+    expect(onRead).toHaveBeenCalledWith("");
+    expect(screen.getByTestId("member-id")).toHaveTextContent("（会員なし）");
+    // 入力して Enter でも読み込める (FR-02-2)
     const input = screen.getByLabelText("お客様ID");
     fireEvent.change(input, { target: { value: " M0001 " } });
     fireEvent.keyDown(input, { key: "Enter" });
     expect(onRead).toHaveBeenCalledWith("M0001");
-    expect(input).toHaveValue("");
     fireEvent.click(screen.getByText("会員証スキャン"));
     expect(onStartScan).toHaveBeenCalled();
-    expect(screen.getByText("会員証スキャン")).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByTestId("member-name")).toHaveTextContent("山田 太郎");
   });
 
-  it("SelectedItemPanel: 未選択時は案内文、数量の直接入力で onChangeQuantity (Q-1 ★)", () => {
-    const { rerender } = render(<SelectedItemPanel line={null} product={null} quoteLine={null} onChangeQuantity={() => {}} onRemove={() => {}} />);
-    expect(screen.getByText(/行を選ぶと/)).toBeInTheDocument();
-    const onChange = jest.fn();
-    rerender(<SelectedItemPanel line={lines[1]} product={{ id: 2, product_code: "4901234567900", name: "食パン 6枚切", unit_price: 188 }} quoteLine={null} onChangeQuantity={onChange} onRemove={() => {}} />);
-    fireEvent.change(screen.getByLabelText("数量"), { target: { value: "5" } });
-    expect(onChange).toHaveBeenCalledWith(5);
-    expect(screen.getByTestId("selected-panel")).toHaveTextContent("食パン 6枚切");
-  });
-
-  it("ProductEntryPanel: Enter で読み込み、空なら呼ばない。MessageBar は空なら何も出さない", () => {
+  it("補助: 手入力の欄。読み込み前は追加が押せない。空では読み込まない (FR-03-7, FR-04-1)", () => {
     const onRead = jest.fn();
-    render(<ProductEntryPanel pendingProduct={null} addedFlash={false} onRead={onRead} onAdd={() => {}} />);
+    const onAdd = jest.fn();
+    const { rerender } = render(<ProductEntryPanel pendingProduct={null} addedFlash={false} onRead={onRead} onAdd={onAdd} />);
+    expect(screen.getByText("追加")).toBeDisabled();
     const input = screen.getByLabelText("商品コード");
     fireEvent.keyDown(input, { key: "Enter" });
     expect(onRead).not.toHaveBeenCalled();
     fireEvent.change(input, { target: { value: "4901234567894" } });
-    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.click(screen.getByText("商品コード読み込み"));
     expect(onRead).toHaveBeenCalledWith("4901234567894");
+    rerender(<ProductEntryPanel pendingProduct={{ id: 1, product_code: "4901234567894", name: "緑茶 500ml", unit_price: 150 }} addedFlash={false} onRead={onRead} onAdd={onAdd} />);
+    expect(screen.getByTestId("pending-name")).toHaveTextContent("緑茶 500ml");
+    expect(screen.getByTestId("pending-price")).toHaveTextContent("150円");
+    fireEvent.click(screen.getByText("追加"));
+    expect(onAdd).toHaveBeenCalled();
+  });
+
+  it("補助: 何もないときの表示", () => {
     render(<MessageBar message={null} />);
     expect(screen.queryByTestId("message-bar")).toBeNull();
     render(<ResultPopup result={null} onClose={() => {}} />);
     expect(screen.queryByTestId("result-popup")).toBeNull();
+    render(<SelectedItemPanel line={null} product={null} quoteLine={null} onChangeQuantity={() => {}} onRemove={() => {}} />);
+    expect(screen.getByText(/行を選ぶと/)).toBeInTheDocument();
+    render(<PosHeader staff={null} />);
+    render(<TotalsPanel quote={null} />);
+    render(<CartTable lines={[]} catalog={{}} quote={null} selectedLineNo={null} onSelect={() => {}} />);
+    expect(screen.getByText("商品が登録されていません")).toBeInTheDocument();
   });
 });

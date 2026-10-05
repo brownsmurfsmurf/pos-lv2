@@ -2,6 +2,7 @@
 // SC-02-07 カメラ映像（FR-03-1/2）。連続して読み取り、同一コードの連続検出は SCAN_DEBOUNCE_MS 無視する（★）。
 import { useEffect, useRef } from "react";
 import { LIMITS } from "@/lib/limits";
+import { createScanGate } from "./debounce";
 import { createReader, decodeImageData } from "./decoder";
 
 interface Props {
@@ -33,8 +34,7 @@ export function CameraPreview({ active, label, onDetected, onUnavailable }: Prop
     let cancelled = false;
     const reader = createReader();
     const canvas = document.createElement("canvas");
-    let lastCode = "";
-    let lastAt = 0;
+    const gate = createScanGate(LIMITS.SCAN_DEBOUNCE_MS);
 
     navigator.mediaDevices
       .getUserMedia({ video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } } })
@@ -58,10 +58,7 @@ export function CameraPreview({ active, label, onDetected, onUnavailable }: Prop
           ctx.drawImage(video, 0, 0);
           const code = decodeImageData(reader, ctx.getImageData(0, 0, canvas.width, canvas.height));
           if (!code) return;
-          const now = Date.now();
-          if (code === lastCode && now - lastAt < LIMITS.SCAN_DEBOUNCE_MS) return;
-          lastCode = code;
-          lastAt = now;
+          if (!gate.accept(code, Date.now())) return; // ★ 同じコードを 1.5 秒以内に読んだら無視（K-34）
           onDetectedRef.current(code);
         }, FRAME_INTERVAL_MS);
       })

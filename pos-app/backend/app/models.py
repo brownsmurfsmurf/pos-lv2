@@ -1,4 +1,4 @@
-"""ORM モデル（設計仕様書 6.3 の 8 テーブルと 1 対 1）。"""
+"""ORM モデル（設計仕様書 v2 の 4 章の 9 テーブルと 1 対 1）。"""
 from __future__ import annotations
 
 from datetime import date, datetime
@@ -35,8 +35,7 @@ class Staff(MasterMixin, Base):
     __tablename__ = "staff"
     id: Mapped[int] = mapped_column(PK, primary_key=True, autoincrement=True)
     login_id: Mapped[str] = mapped_column(CODE, nullable=False, unique=True)
-    password_hash: Mapped[str] = mapped_column(String(60), nullable=False)
-    name: Mapped[str] = mapped_column(String(50), nullable=False)
+    password_hash: Mapped[str] = mapped_column(String(60), nullable=False)   # ★ bcrypt（K-17）
 
 
 class Product(MasterMixin, Base):
@@ -44,7 +43,18 @@ class Product(MasterMixin, Base):
     id: Mapped[int] = mapped_column(PK, primary_key=True, autoincrement=True)
     product_code: Mapped[str] = mapped_column(CODE13, nullable=False, unique=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
-    unit_price: Mapped[int] = mapped_column(Integer, nullable=False)  # ★ 税抜
+    unit_price: Mapped[int] = mapped_column(Integer, nullable=False)  # ★ 税抜（K-11）。0〜9,999,999（K-33）
+
+
+class ProductPriceHistory(TimestampMixin, Base):
+    """★ 単価の変更履歴（N-03, DT-7。K-19）。単価を変える SQL と同じトランザクションで 1 行足す（DB-5）。"""
+
+    __tablename__ = "product_price_histories"
+    id: Mapped[int] = mapped_column(PK, primary_key=True, autoincrement=True)
+    product_id: Mapped[int] = mapped_column(FK, ForeignKey("products.id", ondelete="RESTRICT"), nullable=False)
+    old_unit_price: Mapped[int] = mapped_column(Integer, nullable=False)
+    new_unit_price: Mapped[int] = mapped_column(Integer, nullable=False)
+    changed_at: Mapped[datetime] = mapped_column(DateTime(6), nullable=False, server_default=func.now())
 
 
 class Member(MasterMixin, Base):
@@ -83,6 +93,7 @@ class Transaction(TimestampMixin, Base):
     transacted_at: Mapped[datetime] = mapped_column(DateTime(6), nullable=False)
     staff_id: Mapped[int] = mapped_column(FK, ForeignKey("staff.id", ondelete="RESTRICT"), nullable=False)
     member_id: Mapped[int | None] = mapped_column(FK, ForeignKey("members.id", ondelete="RESTRICT"))
+    tax_rate: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False)  # ★ 取引時点の税率の写し（K-20）
     subtotal_excl_tax: Mapped[int] = mapped_column(Integer, nullable=False)
     tax_amount: Mapped[int] = mapped_column(Integer, nullable=False)
     total_incl_tax: Mapped[int] = mapped_column(Integer, nullable=False)

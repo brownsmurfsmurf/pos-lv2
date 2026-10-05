@@ -15,9 +15,17 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    app_env: str = "development"
+    app_env: str = "production"   # 設定し忘れても安全側（Swagger 非表示）。開発時は .env で development にする
+    # 手元で動かすときの接続先。DB_HOST が設定されていれば使わない
     database_url: str = "sqlite:///./pos.db"
-    jwt_secret: str = "dev-only-secret-change-me"
+    # 講座の形（D-012）。Azure Database for MySQL につなぐときはこの 6 つを設定する
+    db_user: str | None = None
+    db_password: str | None = None
+    db_host: str | None = None
+    db_port: int = 3306
+    db_name: str | None = None
+    ssl_ca_path: str | None = None
+    jwt_secret: str = ""   # 既定値は持たない。.env で 32 文字以上を設定する
     cors_allow_origins: str = "http://localhost:3000"
     limits_path: str | None = None
 
@@ -32,7 +40,12 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    s = Settings()
+    if len(s.jwt_secret) < 32:
+        raise RuntimeError("JWT_SECRET が設定されていないか、32 文字未満です。.env を確認してください。")
+    if s.db_host and not (s.db_user and s.db_password and s.db_name):
+        raise RuntimeError("DB_HOST を設定した場合は DB_USER / DB_PASSWORD / DB_NAME も必要です。")
+    return s
 
 
 def _find_limits_file() -> Path:

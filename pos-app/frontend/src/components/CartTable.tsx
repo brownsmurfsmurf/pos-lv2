@@ -39,7 +39,7 @@ export function CartTable({ lines, catalog, quote, selectedLineNo, onSelect }: P
             const name = q?.product_name ?? p?.name ?? line.product_code;
             const unit = q?.unit_price ?? p?.unit_price ?? 0;
             const discount = q?.discount?.amount ?? 0;
-            const total = q?.line_total ?? unit * line.quantity;
+            const total = q?.line_total; // 小計はサーバの計算結果だけを出す（D-008）
             const selected = selectedLineNo === lineNo;
             return (
               <tr
@@ -54,7 +54,7 @@ export function CartTable({ lines, catalog, quote, selectedLineNo, onSelect }: P
                 <td className="num">{line.quantity}</td>
                 <td className="num">{formatYen(unit)}</td>
                 <td className="num">{discount > 0 ? `−${formatYen(discount)}` : ""}</td>
-                <td className="num">{formatYen(total)}</td>
+                <td className="num">{total === undefined ? "—" : formatYen(total)}</td>
               </tr>
             );
           })}

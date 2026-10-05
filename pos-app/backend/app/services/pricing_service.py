@@ -125,6 +125,52 @@ def calc_totals(subtotal_excl_tax: int, tax_rate: Decimal | None) -> tuple[int, 
     return tax, subtotal_excl_tax + tax
 
 
+@dataclass(frozen=True)
+class PricedItem:
+    """計算に使う 1 行分の入力（商品マスタから読んだ値と数量）。"""
+
+    product_id: int
+    product_code: str
+    product_name: str
+    unit_price: int
+    quantity: int
+
+
+def compute_quote(
+    items: list[PricedItem], rules: list[DiscountRule], business_date: date,
+    has_member: bool, tax_rate: Decimal | None,
+) -> QuoteResult:
+    """金額の計算規則（設計仕様書 v2 の 5 章）を上から順に当てはめる。DB は使わない。
+
+    1. 行の金額 = 単価 × 数量
+    2. 会員がいて期間内の値引きがあれば値引き額を出す
+    3. 小計 = 行の金額 − 値引き額
+    4. 税抜合計 = 小計の合計。消費税 = 税抜合計 × 税率 ÷ 100（合計に 1 回、切り捨て）
+    """
+    lines: list[QuoteLine] = []
+    subtotal = 0
+    for it in items:
+        gross = check_unit_price(it.unit_price) * check_quantity(it.quantity)          # 1
+        hit = applicable_discount(it.product_id, gross, it.quantity, rules, business_date, has_member)  # 2
+        applied, amount = None, 0
+        if hit is not None:
+            rule, amount = hit
+            applied = AppliedDiscount(
+                discount_id=rule.id, type=rule.discount_type, value=float(rule.discount_value), amount=amount
+            )
+        line_total = gross - amount                                                       # 3
+        subtotal += line_total
+        lines.append(QuoteLine(
+            product_code=it.product_code, product_name=it.product_name, unit_price=it.unit_price,
+            quantity=it.quantity, discount=applied, line_total=line_total,
+        ))
+    tax, total = calc_totals(subtotal, tax_rate)                                          # 4
+    return QuoteResult(
+        tax_rate=float(tax_rate), lines=lines,
+        subtotal_excl_tax=subtotal, tax_amount=tax, total_incl_tax=total,
+    )
+
+
 # ---- DB を使う組み立て（API-05 / API-06 が呼ぶ） ----
 
 @dataclass(frozen=True)
@@ -191,28 +237,8 @@ class PricingService:
         if tax_rate is None:
             raise TaxRateNotConfigured()
 
-        lines: list[QuoteLine] = []
-        subtotal = 0
-        for code, qty in items:
-            p = products[code]
-            gross = p.unit_price * qty
-            hit = applicable_discount(p.id, gross, qty, rules, ctx.business_date, member is not None)
-            applied = None
-            amount = 0
-            if hit is not None:
-                rule, amount = hit
-                applied = AppliedDiscount(
-                    discount_id=rule.id, type=rule.discount_type, value=float(rule.discount_value), amount=amount
-                )
-            line_total = gross - amount
-            subtotal += line_total
-            lines.append(QuoteLine(
-                product_code=p.product_code, product_name=p.name, unit_price=p.unit_price,
-                quantity=qty, discount=applied, line_total=line_total,
-            ))
-
-        tax, total = calc_totals(subtotal, tax_rate)
-        return QuoteResult(
-            tax_rate=float(tax_rate), lines=lines,
-            subtotal_excl_tax=subtotal, tax_amount=tax, total_incl_tax=total,
-        )
+        priced = [
+            PricedItem(products[code].id, code, products[code].name, products[code].unit_price, qty)
+            for code, qty in items
+        ]
+        return compute_quote(priced, rules, ctx.business_date, member is not None, tax_rate)

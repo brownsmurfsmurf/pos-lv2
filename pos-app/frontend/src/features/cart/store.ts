@@ -16,6 +16,7 @@ export interface CartState {
   lines: CartLine[]; // 入力（金額の正本は Backend）
   catalog: Record<string, ProductInfo>; // 表示用に読み込んだ商品情報
   quote: QuoteResult | null; // API-05 の最新結果（表示用）
+  quotedRevision: number; // quote がどの quoteRevision の購入リストに対する結果か。一致しない間は購入できない
   selectedLineNo: number | null; // 1 始まり（transaction_items.line_no と同じ採番）
   commitResult: CommitResponse | null;
   message: string | null;
@@ -32,6 +33,7 @@ export function initialState(staff: StaffInfo | null = null): CartState {
     lines: [],
     catalog: {},
     quote: null,
+    quotedRevision: 0,
     selectedLineNo: null,
     commitResult: null,
     message: null,
@@ -131,8 +133,9 @@ export function createCartStore(staff: StaffInfo | null = null) {
       set({ member: m }, true);
     },
 
-    setQuote(q: QuoteResult | null) {
-      set({ quote: q });
+    /** revision は、この見積を頼んだ時点の quoteRevision。省略時は今の購入リストに対する結果として扱う */
+    setQuote(q: QuoteResult | null, revision: number = state.quoteRevision) {
+      set({ quote: q, quotedRevision: revision });
     },
 
     /** FR-08-1〜3: 確定成功。ポップアップ表示状態へ */

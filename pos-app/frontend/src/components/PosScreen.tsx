@@ -6,7 +6,7 @@ import { useCartStore } from "@/features/cart/useCartStore";
 import { CameraPreview } from "@/features/scanner/CameraPreview";
 import { api } from "@/lib/apiClient";
 import { ADDED_MESSAGE, ApiError, messageFor } from "@/lib/errors";
-import type { CommitRequest, QuoteResult } from "@/lib/types";
+import type { CommitRequest, ProductInfo, QuoteResult } from "@/lib/types";
 import { CartTable } from "./CartTable";
 import { MemberPanel } from "./MemberPanel";
 import { MessageBar } from "./MessageBar";
@@ -58,14 +58,15 @@ export function PosScreen() {
   // 購入リストか会員が変わるたびに API-05 を呼ぶ（5.2）。金額の正本は Backend
   useEffect(() => {
     if (state.quoteRevision === 0) return;
+    const revision = state.quoteRevision; // この購入リストに対する見積であることを覚えておく
     if (state.lines.length === 0) {
-      store.setQuote(null);
+      store.setQuote(null, revision);
       return;
     }
     let cancelled = false;
     api
       .quote({ member_code: state.member?.member_code ?? null, items: state.lines })
-      .then((q) => !cancelled && store.setQuote(q))
+      .then((q) => !cancelled && store.setQuote(q, revision))
       .catch((e) => !cancelled && showError(e));
     return () => {
       cancelled = true;
@@ -80,7 +81,7 @@ export function PosScreen() {
     flashTimer.current = setTimeout(() => setAddedFlash(false), 1500);
   }
 
-  function addToCart(p: { id: number; product_code: string; name: string; unit_price: number }) {
+  function addToCart(p: ProductInfo) {
     if (store.addProduct(p)) {
       showInfo(ADDED_MESSAGE);
       flashAdded();
@@ -147,6 +148,7 @@ export function PosScreen() {
   // FR-08-1: 購入確定。表示していた金額を送り、Backend が再計算して照合する（SEC-05）
   async function purchase() {
     const q = state.quote;
+    if (state.quotedRevision !== state.quoteRevision) return; // 金額の計算し直しが届くまでは確定しない
     if (!q || state.lines.length === 0) {
       setTone("error");
       store.setMessage(messageFor("CART_EMPTY"));
@@ -238,7 +240,7 @@ export function PosScreen() {
             type="button"
             className="btn btn--primary btn--purchase"
             onClick={purchase}
-            disabled={busy || state.lines.length === 0 || !state.quote}
+            disabled={busy || state.lines.length === 0 || !state.quote || state.quotedRevision !== state.quoteRevision}
             data-testid="purchase-button"
           >
             購入

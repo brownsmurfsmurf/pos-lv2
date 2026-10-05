@@ -15,9 +15,10 @@ MEMBER_CODE_PATTERN = rf"^[A-Za-z0-9]{{1,{LIMITS.MEMBER_CODE_MAX}}}$"
 
 
 class StaffInfo(BaseModel):
+    """担当者の情報。★ 表示に使うのは担当者ID（K-4）。"""
+
     id: int
     login_id: str
-    name: str
 
 
 class ProductInfo(BaseModel):
@@ -28,11 +29,10 @@ class ProductInfo(BaseModel):
 
 
 class MemberInfo(BaseModel):
-    """氏名のみ（表示に必要な範囲。住所等は返さない）。"""
+    """会員ID だけを返す。氏名・住所などは返さない（要求は「会員IDの表示」。K-5）。"""
 
     id: int
     member_code: str
-    name: str
 
 
 class LoginRequest(BaseModel):
@@ -88,7 +88,7 @@ def _no_duplicate_codes(items):
 class QuoteRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     member_code: str | None = Field(default=None, pattern=MEMBER_CODE_PATTERN)
-    items: list[QuoteItemRequest]
+    items: list[QuoteItemRequest] = Field(max_length=LIMITS.CART_MAX_LINES)   # ★ 0〜100 行（K-32）
 
     @field_validator("items")
     @classmethod
@@ -108,7 +108,7 @@ class CommitItem(BaseModel):
 class CommitRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     member_code: str | None = Field(default=None, pattern=MEMBER_CODE_PATTERN)
-    items: list[CommitItem]
+    items: list[CommitItem] = Field(max_length=LIMITS.CART_MAX_LINES)   # ★ 0 行は 422、101 行以上は 400（K-9, K-32）
     tax_rate: float
     subtotal_excl_tax: StrictInt
     tax_amount: StrictInt

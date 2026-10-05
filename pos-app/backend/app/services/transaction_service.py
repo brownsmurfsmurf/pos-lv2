@@ -1,6 +1,8 @@
 """TransactionService: 再計算との照合と 1 トランザクションでの保存（設計仕様書 API-06、SEC-05、N-02）。"""
 from __future__ import annotations
 
+from decimal import Decimal
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -75,6 +77,7 @@ class TransactionService:
                 transacted_at=ctx.now_utc.replace(tzinfo=None),   # DB-4: UTC の naive で保存
                 staff_id=staff.id,
                 member_id=member.id if member else None,
+                tax_rate=Decimal(str(server.tax_rate)),   # ★ 取引時点の税率を写す（K-20）
                 subtotal_excl_tax=server.subtotal_excl_tax,
                 tax_amount=server.tax_amount,
                 total_incl_tax=server.total_incl_tax,

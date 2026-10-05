@@ -1,13 +1,11 @@
--- 設計仕様書 6.3 テーブル定義（MySQL 8 / Azure Database for MySQL Flexible Server）
+-- 設計仕様書 v2 の 4 章 テーブル定義（MySQL 8 / Azure Database for MySQL Flexible Server）
 -- 文字コード utf8mb4（DB-5）。日時は UTC で保存（DB-4）。
-CREATE DATABASE IF NOT EXISTS pos CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
-USE pos;
+-- 使うデータベース（.env の DB_NAME）を選んでから実行する。データベースは作らない（共用のサーバーを想定）。
 
 CREATE TABLE IF NOT EXISTS staff (
   id            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   login_id      VARCHAR(32) COLLATE utf8mb4_bin NOT NULL,
   password_hash VARCHAR(60) NOT NULL,
-  name          VARCHAR(50) NOT NULL,
   created_at    DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   updated_at    DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
   PRIMARY KEY (id),
@@ -22,7 +20,19 @@ CREATE TABLE IF NOT EXISTS products (
   created_at   DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   updated_at   DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
   PRIMARY KEY (id),
-  UNIQUE KEY uq_products_code (product_code)
+  UNIQUE KEY uq_products_code (product_code),
+  CONSTRAINT ck_products_price CHECK (unit_price BETWEEN 0 AND 9999999)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS product_price_histories (
+  id             BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  product_id     BIGINT UNSIGNED NOT NULL,
+  old_unit_price INT NOT NULL,
+  new_unit_price INT NOT NULL,
+  changed_at     DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  created_at     DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (id),
+  CONSTRAINT fk_price_hist_product FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE RESTRICT
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS members (
@@ -67,6 +77,7 @@ CREATE TABLE IF NOT EXISTS transactions (
   transacted_at     DATETIME(6) NOT NULL,
   staff_id          BIGINT UNSIGNED NOT NULL,
   member_id         BIGINT UNSIGNED NULL,
+  tax_rate          DECIMAL(5,2) NOT NULL,
   subtotal_excl_tax INT NOT NULL,
   tax_amount        INT NOT NULL,
   total_incl_tax    INT NOT NULL,

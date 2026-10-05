@@ -1,113 +1,127 @@
-# pos-app — Lv2 簡易POSアプリ（要求忠実版の実装）
+# pos-app — Lv2 簡易POSアプリ
 
-`Lv2_簡易POSアプリ_設計仕様書_要求忠実版.md` をコンテキストにして生成したコードです。
-要件番号（FR / SC / D / N / Q）、API 番号（API-01〜07）、テストケース番号（UT / IT）はコード中のコメントで仕様書と対応させています。
+`ai-driven/設計仕様書_v2.md` をもとにしたコードです。根拠は、要件定義書 v2（FR / N / DT / P）、決定ログ（D-000〜D-012）、課題の指定項目の 3 つです。
+要求にない機能（ログアウト、管理画面、支払い方法、レシートなど）は作っていません。
 
 ```
 pos-app/
-├─ shared/limits.json      制約値の正本（設計仕様書 10 章）。Frontend・Backend の双方が読む
+├─ shared/limits.json      仮の値（★）を 1 か所にまとめたもの。サーバと画面の両方が読む
 ├─ backend/                pos-api（FastAPI + SQLAlchemy）
 │   ├─ app/
-│   │   ├─ main.py         アプリ本体。CORS・Swagger 非表示・例外変換（11.3、SEC-04/06）
-│   │   ├─ config.py       環境変数と limits.json
-│   │   ├─ clock.py        Clock（UTC 現在時刻）と取引日（JST）の生成（6.1）
-│   │   ├─ db.py           接続プール・UnitOfWork（N-04、DB-4）
-│   │   ├─ models.py       8 テーブル（6.3）
-│   │   ├─ schemas.py      Pydantic（7.3 の TypeScript 型と 1 対 1）
-│   │   ├─ security.py     bcrypt・JWT（SEC-01〜03）
-│   │   ├─ errors.py       エラーコード（11.2）
-│   │   ├─ services/       AuthService / PricingService（金額計算の正本）/ TransactionService（照合・保存）
-│   │   └─ routers/        API-01〜07
-│   ├─ db/schema.sql       MySQL 用 DDL
-│   ├─ scripts/seed.py     テーブル作成と初期データ（税率・値引きは SQL／シードで投入。6.4）
-│   └─ tests/              pytest（UT-B-01〜55、IT-01〜32 の API 側）
-└─ frontend/               pos-web（Next.js 16 / React 19 / Zod 4 / @zxing/library）
-    ├─ src/app/api/**      BFF Route Handler（7.5）。Cookie ⇄ Bearer、Zod 400、5xx 正規化
-    ├─ src/app/login, pos  SC-01、SC-02
-    ├─ src/components/     SC-02 の部品（5.1）
-    ├─ src/features/cart/  状態管理（5.2）
-    ├─ src/features/scanner/ カメラとバーコード復号（SC-02-07）
-    ├─ src/lib/            types / schemas / errors / apiClient / bff / pricing / limits
-    └─ __tests__/          Jest（UT-F-01〜35、BFF の IT）
+│   │   ├─ db.py               DB につなぐ所（接続先の組み立て、SSL、接続の使い回し）
+│   │   ├─ config.py           設定値（.env から読む）
+│   │   ├─ clock.py            取引日を作る所（UTC → 日本時間）
+│   │   ├─ services/pricing_service.py   金額の計算（値引き・税・合計）
+│   │   ├─ services/transaction_service.py  照合と保存
+│   │   ├─ routers/            API-01〜07
+│   │   ├─ models.py           9 テーブル
+│   │   └─ schemas.py, security.py, errors.py, main.py
+│   ├─ db/schema.sql           MySQL 用のテーブル定義
+│   ├─ scripts/                seed（初期データ）、change_price（単価の変更）、hash_password、check_db
+│   └─ tests/                  test_unit.py（UT-B-01〜41）、test_api.py（結合）、test_db_url.py
+└─ frontend/               pos-web（Next.js）
+    ├─ src/app/api/            BFF（画面とサーバの中継）
+    ├─ src/app/login, pos      ログイン画面、POS 画面
+    ├─ src/components/         画面の部品
+    ├─ src/features/cart/      購入リストの状態
+    ├─ src/features/scanner/   カメラとバーコード
+    └─ __tests__/              UT-F-01〜31、BFF の結合テスト
 ```
 
-## 動かし方（ローカル）
+## 手元で動かす
 
-### 1. Backend
+ターミナルを 2 つ使います（PowerShell）。
 
-```bash
-cd pos-app/backend
+**1 つ目: サーバ**
+
+```powershell
+cd pos-app\backend
 python -m venv .venv
-.venv/Scripts/pip install -r requirements-dev.txt      # macOS/Linux は .venv/bin/pip
-copy .env.example .env                                  # DATABASE_URL / JWT_SECRET を設定
-.venv/Scripts/python -m scripts.seed                    # テーブル作成 + 初期データ
-.venv/Scripts/python -m uvicorn app.main:app --reload --port 8000
+.venv\Scripts\pip install -r requirements-dev.txt
+Copy-Item .env.example .env
+.venv\Scripts\python -m scripts.seed --reset
+.venv\Scripts\python -m uvicorn app.main:app --port 8000
 ```
 
-- `.env.example` は SQLite（`sqlite:///./pos.db`）で動く設定です。MySQL は `DATABASE_URL=mysql+pymysql://user:pass@host:3306/pos?charset=utf8mb4`
-- `APP_ENV=development` のときだけ http://localhost:8000/docs が開きます（SEC-06）
-- テスト: `.venv/Scripts/python -m pytest --cov=app`
+`.env` は、手元で試すだけなら `APP_ENV=development` と `JWT_SECRET`（32 文字以上）があれば動きます。DB は手元の `pos.db`（SQLite）を使います。
 
-### 2. Frontend
+**2 つ目: 画面**
 
-```bash
-cd pos-app/frontend
+```powershell
+cd pos-app\frontend
 npm install
-copy .env.example .env.local                            # API_UPSTREAM_URL=http://localhost:8000
-npm run dev                                             # http://localhost:3000 → /login
+npm run dev
 ```
 
-- テスト: `npm test` / カバレッジ: `npm run test:coverage`（Stmts・Lines 80%、Branches 70%、Funcs 90%）
-- 型チェック: `npm run typecheck`
-- `shared/limits.json` は `npm run dev` などの前に `src/lib/limits.json` へ自動で写されます
+ブラウザで http://localhost:3000 を開き、ログインします。
 
-### 3. 初期データ（scripts/seed.py）
+## 初期データ（学習用）
 
-| 種別 | 値 |
+`scripts/seed.py` が入れるデータです。テスト仕様書 v2 の E-1〜E-3 をそのまま試せます。
+
+| 種類 | 値 |
 |---|---|
 | 担当者 | `staff01` / `pos-staff-01`、`staff02` / `pos-staff-02` |
-| 商品 A（20% 引き・期間内） | `4901234567894` 緑茶 500ml 150円 |
-| 商品 B（値引きなし） | `4901234567900` 食パン 6枚切 188円 |
-| 商品 C（値引きの終了日が昨日） | `4901234567917` 牛乳 1L 240円 |
-| 商品 D（20 円引き・期間内） | `4901234567924` 卵 10個 270円 |
-| 商品 E | `4901234567931` ヨーグルト 400g 160円 |
-| 会員 | `M0001` 山田 太郎、`M0002` 高橋 美咲 |
-| 税率 | 10.00% |
+| 商品 A | `4901234567894` 緑茶 500ml 150 円。会員は 20% 引き（期間内） |
+| 商品 B | `4901234567900` 食パン 6枚切 188 円。値引きなし |
+| 商品 C | `4901234567917` 牛乳 1L 240 円。20% 引きだが終了日は昨日 |
+| 商品 D | `4901234567924` 卵 10個 270 円。会員は 20 円引き（期間内） |
+| 会員 | `M0001`、`M0002` |
+| 税率 | 10% |
 
-税率・値引きの変更は SQL で行います（設計仕様書 6.4、Q-9）。例:
+担当者のパスワードはこの README に公開されている学習用の値です。共用・本番の DB には入れないでください。
+`DB_HOST` を設定した状態では、`--allow-remote` を付けない限り seed は実行されません。
 
-```sql
-UPDATE tax_rates SET rate = 8.00 WHERE id = 1;
-INSERT INTO discounts (product_id, start_date, end_date, discount_type, discount_value)
-VALUES (2, '2026-10-01', '2026-10-31', 'amount', 20.00);
+## Azure Database for MySQL につなぐ
+
+`backend/.env` に、講座の教材と同じ 6 つの設定値を入れます（決定ログ D-012）。
+
+| 設定値 | 入れるもの |
+|---|---|
+| `DB_USER` | ユーザー名 |
+| `DB_PASSWORD` | パスワード。**そのまま**書く。`@` や `&` が入っていても変換しない |
+| `DB_HOST` | サーバー名（`xxxx.mysql.database.azure.com`） |
+| `DB_PORT` | 3306 |
+| `DB_NAME` | データベース名 |
+| `SSL_CA_PATH` | 証明書ファイル（.pem）の場所。空なら OS が持つ証明書で検証する |
+
+パスワードの記号は、`app/db.py` の `build_database_url` が安全な形に変換します。
+教材のように `f"mysql+pymysql://{user}:{password}@{host}..."` と文字列へ直接はめ込むと、パスワードの中の `@` が区切りとして解釈され、接続に失敗します。
+
+つながるかどうかは、次で確かめられます。届かない場合は、理由（名前、IP の許可、ユーザー・パスワード、データベース名、SSL）を切り分けて表示します。
+
+```powershell
+.venv\Scripts\python -m scripts.check_db
 ```
 
-## 仕様書の「★（仮置き）」をコードでどう扱ったか
+テーブルは `db/schema.sql` を、使うデータベースを選んだうえで実行して作ります。
 
-| 事項 | 実装 | 確認事項 |
-|---|---|---|
-| 端数は 1 円未満切り捨て、値引きは額が最大の 1 件 | `PricingService.discount_amount_for` / `applicable_discount` / `calc_totals` | Q-6〜Q-8 |
-| 値引き額が行の金額を超える場合 | 行の金額を上限（小計を負にしない） | Q-7 |
-| 数量 99 超 | 変更せず「数量は 1〜99 で指定してください」を表示 | Q-2 |
-| 空の購入リストで購入 | 422 CART_EMPTY。購入ボタン自体も無効 | Q-4 |
-| スキャンした商品 | 追加ボタンなしで購入リストへ（手入力は名称・単価を表示して追加ボタン） | Q-5 |
-| 数量の変え方 | 直接入力と ± ボタンの両方 | Q-1 |
-| 存在しない会員ID | 文言を表示し会員は未設定のまま | Q-3 |
-| パスワード | bcrypt でハッシュ化。ログイン要求は最大 64 文字のみ検証 | Q-11 |
-| 商品コード・会員ID | 13 桁の数字 / 32 文字の英数字 | Q-21 |
-| 設定変更 | SQL で直接 | Q-9, Q-10 |
+## 設定の変更（管理画面は作らない。設計仕様書 v2 の DB-5）
 
-## 取引日（JST）の生成（講師指摘への対応）
+| 変えるもの | 方法 |
+|---|---|
+| 税率 | `UPDATE tax_rates SET rate = 8.00;` |
+| 値引き | `INSERT INTO discounts (product_id, start_date, end_date, discount_type, discount_value) VALUES (...)`。日付は日本時間の暦日 |
+| 商品の単価 | `python -m scripts.change_price <商品コード> <新しい単価>`。変更履歴も同時に残る |
+| 担当者のパスワード | `python -m scripts.hash_password` でハッシュを作り、SQL で入れる。8〜64 文字 |
 
-- `app/clock.py` の `Clock` が UTC 現在時刻を返し、`business_date_of()` が `Asia/Tokyo` の日付に変換します
-- `PricingService.new_context()` が取引時刻と取引日を **1 回だけ**取得し、API-06 は値引き判定と保存に同じ値を使います
-- `date.today()`・SQL の `CURDATE()`・ブラウザの時計は使いません。MySQL 接続はセッションで `time_zone='+00:00'` を明示します
-- 境界のテスト: `tests/test_pricing_service.py`（UT-B-30/31: UTC 14:59:59 → 適用、15:00:00 → 非適用）、`tests/test_api.py::test_it_16_jst_boundary_via_api`
+## テスト
 
-## Azure への配置（設計仕様書 2 章）
+```powershell
+cd pos-app\backend
+.venv\Scripts\python -m pytest
+```
 
-- pos-web、pos-api とも **App Service（Basic 以上、Always On 有効）**。Functions（従量課金）は使わない（N-03、N-04）
-- pos-api のアプリケーション設定: `APP_ENV=production`、`DATABASE_URL`、`JWT_SECRET`、`CORS_ALLOW_ORIGINS=https://<pos-web のホスト>`
-- pos-web のアプリケーション設定: `API_UPSTREAM_URL=https://<pos-api のホスト>`、`NODE_ENV=production`（Cookie に Secure が付く）
-- DB は Azure Database for MySQL Flexible Server。`backend/db/schema.sql` で作成し、`scripts/seed.py` か SQL で初期データを投入
-- ヘルスチェックのパス: `/api/v1/health`
+```powershell
+cd pos-app\frontend
+npm test
+```
+
+テストの番号は `ai-driven/テスト仕様書_v2.md` と同じです（UT-B-01〜41、UT-F-01〜31、IT-xx）。
+
+## Azure に載せるとき（設計仕様書 v2 の 1 章）
+
+- pos-web、pos-api とも App Service（Basic 以上、Always On を有効）
+- pos-api の設定: `APP_ENV=production`、`JWT_SECRET`、`DB_USER` など 6 つ、`CORS_ALLOW_ORIGINS=https://<pos-web のホスト>`
+- pos-web の設定: `API_UPSTREAM_URL=https://<pos-api のホスト>`、`NODE_ENV=production`
+- 稼働確認のパス: `/api/v1/health`

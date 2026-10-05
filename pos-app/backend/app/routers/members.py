@@ -1,4 +1,4 @@
-"""API-04 GET /members/{code}（氏名のみ返す）。"""
+"""API-04 GET /members/{code}（会員ID だけを返す。氏名は返さない）。"""
 from fastapi import APIRouter, Depends, Path
 from sqlalchemy import select
 from sqlalchemy.orm import Session

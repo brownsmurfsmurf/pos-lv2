@@ -39,7 +39,7 @@ class ProductNotFound(AppError):
 class MemberNotFound(AppError):
     status_code = 404
     code = "MEMBER_NOT_FOUND"
-    message = "該当する会員が見つかりません"
+    message = "会員が見つかりません"
 
 
 class QuantityOutOfRange(AppError):
@@ -55,7 +55,7 @@ class CartEmpty(AppError):
 
 
 class CartTooManyLines(AppError):
-    status_code = 422
+    status_code = 400
     code = "VALIDATION_ERROR"
     message = "商品の種類が上限を超えています"
 

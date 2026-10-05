@@ -1,5 +1,5 @@
 /** @jest-environment node */
-// IT-04〜06, 10, 32 の BFF 側（テスト仕様書 6.1）: Cookie ⇄ Bearer の付け替え、Zod 400、5xx の正規化
+// 結合テスト IT-04〜06, IT-29 の BFF 側（テスト仕様書 v2 の 5 章）: Cookie ⇄ Bearer の付け替え、入力の検査、5xx を隠す
 import { NextRequest } from "next/server";
 
 const cookieStore = new Map<string, string>();
@@ -7,7 +7,8 @@ jest.mock("next/headers", () => ({
   cookies: async () => ({ get: (name: string) => (cookieStore.has(name) ? { name, value: cookieStore.get(name) } : undefined) }),
 }));
 
-import { COOKIE_NAME, forward, parseBody } from "@/lib/bff";
+import { NextResponse } from "next/server";
+import { COOKIE_NAME, forward, parseBody, setTokenCookie } from "@/lib/bff";
 import { quoteRequestSchema } from "@/lib/schemas";
 
 const fetchMock = jest.fn();
@@ -47,7 +48,7 @@ describe("forward", () => {
     expect(res.cookies.get(COOKIE_NAME)?.value).toBe("");
   });
 
-  it("IT-32 上流 500 は INTERNAL_ERROR に置き換え、内部情報を含まない", async () => {
+  it("IT-29 上流 500 は INTERNAL_ERROR に置き換え、内部情報を含まない", async () => {
     cookieStore.set(COOKIE_NAME, "tok");
     fetchMock.mockResolvedValue(upstream(500, { detail: "Traceback: secret sql" }));
     const res = await forward("/products/4901234567894");
@@ -62,6 +63,19 @@ describe("forward", () => {
     fetchMock.mockRejectedValue(new Error("ECONNREFUSED"));
     const res = await forward("/auth/me");
     expect(res.status).toBe(503);
+  });
+});
+
+describe("setTokenCookie", () => {
+  it("IT-04 トークンは HttpOnly・SameSite=Strict・Path=/ の Cookie に入る（Secure は本番で付く）", () => {
+    const res = NextResponse.json({ staff: { id: 1, login_id: "staff01" } });
+    setTokenCookie(res, "tok123", 28800);
+    const c = res.cookies.get(COOKIE_NAME)!;
+    expect(c.value).toBe("tok123");
+    expect(c.httpOnly).toBe(true);
+    expect(c.sameSite).toBe("strict");
+    expect(c.path).toBe("/");
+    expect(c.maxAge).toBe(28800);
   });
 });
 

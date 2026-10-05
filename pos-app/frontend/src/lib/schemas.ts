@@ -19,11 +19,16 @@ export const loginRequestSchema = z.strictObject({
   password: z.string().min(1).max(LIMITS.PASSWORD_MAX),
 });
 
+// ★ 同じ商品コードが 2 行あれば通さない（K-32）
+const noDuplicateCodes = (items: { product_code: string }[]) =>
+  new Set(items.map((i) => i.product_code)).size === items.length;
+
 export const quoteRequestSchema = z.strictObject({
   member_code: memberCodeSchema.nullable(),
   items: z
     .array(z.strictObject({ product_code: productCodeSchema, quantity: quantitySchema }))
-    .max(LIMITS.CART_MAX_LINES),
+    .max(LIMITS.CART_MAX_LINES)
+    .refine(noDuplicateCodes, "商品コードが重複しています"),
 });
 
 export const commitRequestSchema = z.strictObject({
@@ -38,7 +43,8 @@ export const commitRequestSchema = z.strictObject({
         line_total: moneySchema,
       }),
     )
-    .max(LIMITS.CART_MAX_LINES),
+    .max(LIMITS.CART_MAX_LINES)
+    .refine(noDuplicateCodes, "商品コードが重複しています"),
   tax_rate: z.number().min(0).max(100),
   subtotal_excl_tax: moneySchema,
   tax_amount: moneySchema,

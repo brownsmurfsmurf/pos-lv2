@@ -1,14 +1,15 @@
-"""テスト共通設定。DB は SQLite（メモリ）、時刻は FixedClock で固定する。"""
+"""テスト共通の準備。DB は SQLite（メモリ）、時刻は固定した時計を使う。"""
 from __future__ import annotations
 
 import os
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
-os.environ.setdefault("APP_ENV", "test")
-os.environ.setdefault("DATABASE_URL", "sqlite://")
-os.environ.setdefault("JWT_SECRET", "test-secret-test-secret-test-secret")
-os.environ.setdefault("CORS_ALLOW_ORIGINS", "http://localhost:3000")
+os.environ["APP_ENV"] = "test"
+os.environ["DATABASE_URL"] = "sqlite://"
+os.environ["DB_HOST"] = ""          # テストでは必ず手元の DB を使う
+os.environ["JWT_SECRET"] = "test-secret-test-secret-test-secret"
+os.environ["CORS_ALLOW_ORIGINS"] = "http://localhost:3000"
 
 import pytest
 from fastapi.testclient import TestClient
@@ -21,9 +22,10 @@ from app.main import app
 from app.models import Discount, Member, Product, Staff, TaxRate
 from app.security import hash_password
 
-# JST 2026-09-15 12:00 = UTC 03:00
+# 日本時間 2026-09-15 12:00 = UTC 03:00
 DEFAULT_NOW = datetime(2026, 9, 15, 3, 0, 0, tzinfo=timezone.utc)
-TODAY_JST = date(2026, 9, 15)
+
+A, B, C, D = "4901234567894", "4901234567900", "4901234567917", "4901234567924"
 
 
 @pytest.fixture()
@@ -39,12 +41,16 @@ def session():
 
 @pytest.fixture()
 def seeded(session: Session):
-    """商品 A（20% 引き・期間内）、B（値引きなし）、C（期間切れ）、D（20 円引き）、会員 M0001、税率 10%。"""
-    staff = Staff(login_id="staff01", password_hash=hash_password("pos-staff-01"), name="佐藤 花子")
-    a = Product(product_code="4901234567894", name="緑茶 500ml", unit_price=150)
-    b = Product(product_code="4901234567900", name="食パン 6枚切", unit_price=188)
-    c = Product(product_code="4901234567917", name="牛乳 1L", unit_price=240)
-    d = Product(product_code="4901234567924", name="卵 10個", unit_price=270)
+    """テスト仕様書 v2 の E-1〜E-3 を再現できるデータ。
+
+    A 150 円（会員 20% 引き 9/1〜9/30）、B 188 円（値引きなし）、
+    C 240 円（20% 引きだが 9/14 で終了 = 取引日 9/15 の昨日）、D 270 円（20 円引き 9/1〜9/9）
+    """
+    staff = Staff(login_id="staff01", password_hash=hash_password("pos-staff-01"))
+    a = Product(product_code=A, name="緑茶 500ml", unit_price=150)
+    b = Product(product_code=B, name="食パン 6枚切", unit_price=188)
+    c = Product(product_code=C, name="牛乳 1L", unit_price=240)
+    d = Product(product_code=D, name="卵 10個", unit_price=270)
     m = Member(member_code="M0001", name="山田 太郎", address="東京都", age=34)
     session.add_all([staff, a, b, c, d, m, TaxRate(rate=Decimal("10.00"))])
     session.flush()
@@ -52,7 +58,7 @@ def seeded(session: Session):
         Discount(product_id=a.id, start_date=date(2026, 9, 1), end_date=date(2026, 9, 30),
                  discount_type="percent", discount_value=Decimal("20.00")),
         Discount(product_id=c.id, start_date=date(2026, 8, 1), end_date=date(2026, 9, 14),
-                 discount_type="amount", discount_value=Decimal("30.00")),
+                 discount_type="percent", discount_value=Decimal("20.00")),
         Discount(product_id=d.id, start_date=date(2026, 9, 1), end_date=date(2026, 9, 9),
                  discount_type="amount", discount_value=Decimal("20.00")),
     ])

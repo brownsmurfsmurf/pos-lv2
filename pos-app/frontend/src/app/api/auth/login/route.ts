@@ -7,7 +7,7 @@ interface UpstreamLogin {
   access_token: string;
   token_type: "Bearer";
   expires_in: number;
-  staff: { id: number; login_id: string; name: string };
+  staff: { id: number; login_id: string };
 }
 
 export async function POST(req: NextRequest) {
